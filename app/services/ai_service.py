@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from google import genai
-from google.genai import errors
+from google.genai import errors, types
 
 from app.config import settings
 
@@ -58,7 +58,7 @@ class GeminiAIService:
             HTTPException(504): If the request times out.
         """
         client = self.get_client()
-        model_name = settings.GEMINI_MODEL or "gemini-2.5-flash"
+        model_name = settings.GEMINI_MODEL or "gemini-3.5-flash"
 
         # Log metadata only - never log sensitive user prompts or credentials
         logger.info(
@@ -67,27 +67,88 @@ class GeminiAIService:
             user_id,
         )
 
+        config = types.GenerateContentConfig(
+            system_instruction=(
+                "You are a helpful, professional, and concise customer-care AI assistant. "
+                "Provide direct, crisp, and easily readable answers (typically 2 to 4 bullet points or short paragraphs). "
+                "Avoid writing overly long essays or filler content unless the user explicitly requests extensive detail."
+            ),
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+            max_output_tokens=600,
+        )
+
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=config,
+                )
+            except errors.APIError as initial_exc:
+                if getattr(initial_exc, "code", None) == 503 and model_name != "gemini-3.5-flash-lite":
+                    logger.warning(
+                        "Gemini model '%s' busy (503). Retrying with resilient fallback 'gemini-3.5-flash-lite'...",
+                        model_name,
+                    )
+                    model_name = "gemini-3.5-flash-lite"
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=config,
+                    )
+                else:
+                    raise initial_exc
         except errors.APIError as exc:
-            err_msg = str(exc)
+            err_code = getattr(exc, "code", None)
+            err_status = getattr(exc, "status", None)
+            err_msg = getattr(exc, "message", str(exc))
+
+            # Safe diagnostic logging: code, status, and message (never user prompt or API key)
             logger.error(
-                "Gemini API error occurred: code=%s, message=%s",
-                getattr(exc, "code", "unknown"),
-                getattr(exc, "message", err_msg),
+                "Gemini API error occurred: code=%s, status=%s, message=%s",
+                err_code if err_code is not None else "unknown",
+                err_status if err_status is not None else "unknown",
+                err_msg,
             )
-            if "API_KEY_INVALID" in err_msg or "API key not valid" in err_msg:
+
+            err_msg_lower = err_msg.lower()
+            if "api_key_invalid" in err_msg_lower or "api key not valid" in err_msg_lower or err_code == 401:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail="Gemini API key is invalid. Please verify your GEMINI_API_KEY in the .env file.",
                 ) from exc
 
+            if err_code == 404 or "not found" in err_msg_lower or "no longer available" in err_msg_lower:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=(
+                        f"Gemini AI service encountered an error while processing your request: "
+                        f"The configured model '{model_name}' was not found or is no longer available. "
+                        f"Please update GEMINI_MODEL in your .env file."
+                    ),
+                ) from exc
+
+            if err_code == 429 or "resource_exhausted" in str(err_status).lower() or "quota" in err_msg_lower:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=(
+                        "Gemini AI service encountered an error while processing your request: "
+                        "API rate limit or quota exceeded. Please try again later."
+                    ),
+                ) from exc
+
+            if err_code == 503 or "unavailable" in str(err_status).lower():
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=(
+                        "Gemini AI service encountered an error while processing your request: "
+                        "The model is temporarily overloaded or experiencing high demand. Please try again shortly."
+                    ),
+                ) from exc
+
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Gemini AI service encountered an error while processing your request.",
+                detail=f"Gemini AI service encountered an error while processing your request: {err_msg}",
             ) from exc
         except TimeoutError as exc:
             logger.error("Gemini request timed out for user ID %s", user_id)

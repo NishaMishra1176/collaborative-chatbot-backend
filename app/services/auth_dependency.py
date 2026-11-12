@@ -5,7 +5,7 @@ Validates signed JWT tokens and resolves the current authenticated user.
 
 import logging
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import jwt
 
@@ -16,15 +16,14 @@ from app.services.security import decode_access_token
 
 logger = logging.getLogger(__name__)
 
-# OAuth2 scheme configures Swagger UI to show an Authorize button
-oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/api/auth/login",
-    description="Enter JWT Bearer token obtained from POST /api/auth/login",
+# Standard HTTPBearer scheme: shows a single "Value: [token]" input box in Swagger UI
+security = HTTPBearer(
+    description="Enter JWT Bearer token obtained from POST /api/v1/auth/login",
 )
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
     """
@@ -32,8 +31,15 @@ def get_current_user(
     and returns the authenticated User instance.
 
     Raises:
-        HTTPException(401): On expired token, invalid token signature, or deleted user.
+        HTTPException(401): On missing, expired, or invalid token, or deleted user.
     """
+    token = credentials.credentials
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",

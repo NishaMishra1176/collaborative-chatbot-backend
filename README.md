@@ -1,6 +1,6 @@
 # Collaborative Generative AI Customer-Care Chatbot Backend
 
-A production-ready, secure backend for a collaborative customer-care chatbot built with **FastAPI**, **SQLAlchemy**, **MySQL**, and **Google Gemini GenAI** (`gemini-2.5-flash`).
+A production-ready, secure backend for a collaborative customer-care chatbot built with **FastAPI**, **SQLAlchemy**, **MySQL**, and **Google Gemini GenAI** (`gemini-3.5-flash`).
 
 ---
 
@@ -14,7 +14,7 @@ A production-ready, secure backend for a collaborative customer-care chatbot bui
   - Constant-time verification on login to protect against user enumeration / timing attacks.
 - **Google Gemini AI Integration**:
   - Powered by the official `google-genai` Python SDK.
-  - Configurable model (defaults to `gemini-2.5-flash`).
+  - Configurable model (defaults to `gemini-3.5-flash`).
   - Protected endpoint (`POST /api/v1/chat`) requiring Bearer token.
   - Strict input validation (1 to 4,000 characters, rejects empty or whitespace-only messages).
   - Resilient error handling (HTTP 502 for upstream failures, HTTP 503 for missing keys, HTTP 504 for timeouts).
@@ -141,7 +141,7 @@ JWT_ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 
 GEMINI_API_KEY="your_gemini_api_key_here"
-GEMINI_MODEL="gemini-2.5-flash"
+GEMINI_MODEL="gemini-3.5-flash"
 
 CORS_ORIGINS="*"
 ```

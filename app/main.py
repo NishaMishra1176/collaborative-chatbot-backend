@@ -4,17 +4,22 @@ Phase 4: User Registration, JWT Authentication, and Google Gemini AI Chat API.
 """
 
 import logging
+import urllib.parse
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, Depends
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import settings
-from app.database import check_db_connection, create_tables
+from app.database import check_db_connection, create_tables, get_db
 from app.routers import auth_router, chat_router, users_router
+from app.schemas.auth import LoginRequest, TokenResponse
+from app.services.auth_service import authenticate_user
+from app.services.security import create_access_token
 
 # ---------------------------------------------------------
 # Logging Configuration
@@ -156,6 +161,46 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(users_router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Authentication"])
+
+# OAuth2 compatibility endpoint for Swagger UI Authorize dialog
+@app.post("/api/auth/login", response_model=TokenResponse, include_in_schema=False)
+async def oauth2_token_login(request: Request, db: Session = Depends(get_db)):
+    """
+    OAuth2 compatibility token endpoint for Swagger UI's Authorize dialog.
+    Supports both application/x-www-form-urlencoded (Swagger OAuth2 flow)
+    and application/json.
+    """
+    ct = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" in ct:
+        body = await request.body()
+        params = urllib.parse.parse_qs(body.decode("utf-8"))
+        email = params.get("username", [None])[0] or params.get("email", [None])[0]
+        password = params.get("password", [None])[0]
+        if not email or not password:
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={
+                    "status": "error",
+                    "status_code": 422,
+                    "detail": "Username (email) and password are required.",
+                },
+            )
+        credentials = LoginRequest(email=email, password=password)
+    else:
+        body = await request.json()
+        credentials = LoginRequest(**body)
+
+    user = authenticate_user(db, credentials)
+    token, expires_in = create_access_token(
+        subject=user.id,
+        extra_claims={"email": user.email},
+    )
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in=expires_in,
+    )
+
 
 # Direct aliases (/api/...) for backward compatibility
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"], include_in_schema=False)

@@ -3,7 +3,7 @@ Automated unit tests for Google Gemini AI Chat API (POST /api/v1/chat and POST /
 Uses unittest.mock to mock Google GenAI SDK calls so tests do not make real network requests.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, ANY
 import pytest
 from fastapi.testclient import TestClient
 from google.genai import errors
@@ -129,6 +129,7 @@ def test_chat_v1_success_mocked(client, auth_headers):
     mock_client.models.generate_content.assert_called_once_with(
         model=settings.GEMINI_MODEL,
         contents="Hello Gemini",
+        config=ANY,
     )
 
 
